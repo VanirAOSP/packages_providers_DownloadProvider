@@ -280,13 +280,9 @@ public class DownloadNotifier {
                             builder.setContentText(res.getText(R.string.download_paused));
                         else
                             builder.setContentText(res.getText(R.string.download_queued));
-                    } else if (!TextUtils.isEmpty(info.mDescription)) {
-                        builder.setContentText(info.mDescription);
                     } else if (speedAsSizeText != null) {
                         builder.setContentText(res.getString(R.string.download_speed_text,
-                                    remainingText, speedAsSizeText));
-                    } else {
-                        builder.setContentText(remainingText);
+                                remainingText, speedAsSizeText));
                     }
                     builder.setContentInfo(percentText);
 
