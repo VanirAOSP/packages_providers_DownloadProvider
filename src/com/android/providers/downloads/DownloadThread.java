@@ -92,9 +92,6 @@ public class DownloadThread implements Runnable {
 
     private volatile boolean mPolicyDirty;
 
-    // Add for carrier feature - download breakpoint continuing.
-    // Support continuing download after the download is broken
-    // although HTTP Server doesn't contain etag in its response.
     private final static String QRD_ETAG = "qrd_magic_etag";
 
     public DownloadThread(Context context, SystemFacade systemFacade, DownloadInfo info,
@@ -527,9 +524,8 @@ public class DownloadThread implements Runnable {
             if (mInfo.mStatus == Downloads.Impl.STATUS_CANCELED || mInfo.mDeleted) {
                 throw new StopRequestException(Downloads.Impl.STATUS_CANCELED, "download canceled");
             }
-
             if (mInfo.mStatus == Downloads.Impl.STATUS_PAUSED_BY_MANUAL) {
-                // user pauses the download by manual, here send exception and stop data transfer.
+                // user pauses the download by manual, here send exception and stop the request.
                 throw new StopRequestException(Downloads.Impl.STATUS_PAUSED_BY_MANUAL, "download paused by manual");
             }
         }
@@ -583,7 +579,7 @@ public class DownloadThread implements Runnable {
      */
     private void writeDataToDestination(State state, byte[] data, int bytesRead, OutputStream out)
             throws StopRequestException {
-        mStorageManager.verifySpaceBeforeWritingToFile(mContext,
+        mStorageManager.verifySpaceBeforeWritingToFile(
                 mInfo.mDestination, state.mFilename, bytesRead);
 
         boolean forceVerified = false;
@@ -595,8 +591,7 @@ public class DownloadThread implements Runnable {
                 // TODO: better differentiate between DRM and disk failures
                 if (!forceVerified) {
                     // couldn't write to file. are we out of space? check.
-                    mStorageManager.verifySpace(mContext, mInfo.mDestination,
-                            state.mFilename, bytesRead);
+                    mStorageManager.verifySpace(mInfo.mDestination, state.mFilename, bytesRead);
                     forceVerified = true;
                 } else {
                     throw new StopRequestException(Downloads.Impl.STATUS_FILE_ERROR,
@@ -770,7 +765,7 @@ public class DownloadThread implements Runnable {
                 Log.i(Constants.TAG, "have run thread before for id: " + mInfo.mId +
                         ", and state.mFilename: " + state.mFilename);
             }
-            if (!Helpers.isFilenameValid(mContext, state.mFilename,
+            if (!Helpers.isFilenameValid(state.mFilename,
                     mStorageManager.getDownloadDataDirectory())) {
                 // this should never happen
                 throw new StopRequestException(Downloads.Impl.STATUS_FILE_ERROR,

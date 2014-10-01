@@ -92,7 +92,7 @@ public class Helpers {
             path = chooseFilename(url, hint, contentDisposition, contentLocation,
                                              destination);
         }
-        storageManager.verifySpace(context, destination, path, contentLength);
+        storageManager.verifySpace(destination, path, contentLength);
         if (DownloadDrmHelper.isDrmConvertNeeded(mimeType)) {
             path = DownloadDrmHelper.modifyDrmFwLockFileExtension(path);
         }
@@ -372,18 +372,6 @@ public class Helpers {
         }
 
         return false;
-    }
-
-    /**
-     * Checks whether the filename looks legitimate
-     */
-    static boolean isFilenameValid(Context context, String filename, File downloadsDataDir) {
-        filename = filename.replaceFirst("/+", "/"); // normalize leading slashes
-        return filename.startsWith(Environment.getDownloadCacheDirectory().toString())
-                || filename.startsWith(downloadsDataDir.toString())
-                || filename.startsWith(Environment.getExternalStorageDirectory().toString())
-                || (StorageManager.isSecondStorageSupported(context)
-                && filename.startsWith(StorageManager.getExternalStorageDirectory(context)));
     }
 
     /**

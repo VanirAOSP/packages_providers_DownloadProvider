@@ -41,12 +41,16 @@ import libcore.io.IoUtils;
  * Intercept all download clicks to provide special behavior. For example,
  * PackageInstaller really wants raw file paths.
  */
-public class TrampolineActivity extends Activity implements DialogDismissListener {
+public class TrampolineActivity extends Activity {
     private static final String TAG_PAUSED = "paused";
     private static final String TAG_FAILED = "failed";
 
     private static final String KEY_ID = "id";
     private static final String KEY_REASON = "reason";
+
+    static final int WIFI_DOWNLOAD = 0;
+    static final int PAUSE_DOWNLOAD = 1;
+    static final int RESUME_DOWNLOAD = 2;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,24 +84,15 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
                 sendRunningDownloadClickedBroadcast(id);
                 finish();
                 break;
-
             case DownloadManager.STATUS_RUNNING:
-                // Add for carrier feature - pause and resume download by manual.
-                dm.pauseDownload(id);
-                finish();
+                PausedDialogFragment.show(getFragmentManager(), id, PAUSE_DOWNLOAD);
                 break;
 
             case DownloadManager.STATUS_PAUSED:
                 if (reason == DownloadManager.PAUSED_QUEUED_FOR_WIFI) {
-                    PausedDialogFragment.show(getFragmentManager(), id);
+                    PausedDialogFragment.show(getFragmentManager(), id, WIFI_DOWNLOAD);
                 } else if (reason == DownloadManager.PAUSED_BY_MANUAL) {
-                    // Add for carrier feature - pause and resume download by manual.
-                    dm.resumeDownload(id);
-                    Intent intent = new Intent(Constants.ACTION_RESUME);
-                    intent.setClassName("com.android.providers.downloads",
-                            "com.android.providers.downloads.DownloadReceiver");
-                    sendBroadcast(intent);
-                    finish();
+                    PausedDialogFragment.show(getFragmentManager(), id, RESUME_DOWNLOAD);
                 } else {
                     sendRunningDownloadClickedBroadcast(id);
                     finish();
@@ -125,53 +120,75 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
         sendBroadcast(intent);
     }
 
-    @Override
-    public void onDialogDismiss() {
-        finish();
-    }
-
     public static class PausedDialogFragment extends DialogFragment {
-        private DialogDismissListener mListener;
-
-        public static void show(FragmentManager fm, long id) {
+        public static void show(FragmentManager fm, long id, int reason) {
             final PausedDialogFragment dialog = new PausedDialogFragment();
             final Bundle args = new Bundle();
             args.putLong(KEY_ID, id);
+            args.putInt(KEY_REASON, reason);
             dialog.setArguments(args);
             dialog.show(fm, TAG_PAUSED);
         }
 
         @Override
-        public void onDetach() {
-            super.onDetach();
-            mListener = null;
-        }
-
-        @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             final Context context = getActivity();
-            mListener = (DialogDismissListener) getActivity();
 
             final DownloadManager dm = (DownloadManager) context.getSystemService(
                     Context.DOWNLOAD_SERVICE);
             dm.setAccessAllDownloads(true);
 
             final long id = getArguments().getLong(KEY_ID);
+            final int reason = getArguments().getInt(KEY_REASON);
 
             final AlertDialog.Builder builder = new AlertDialog.Builder(
                     context, AlertDialog.THEME_HOLO_LIGHT);
-            builder.setTitle(R.string.dialog_title_queued_body);
-            builder.setMessage(R.string.dialog_queued_body);
 
-            builder.setPositiveButton(R.string.keep_queued_download, null);
+            switch (reason) {
+                case WIFI_DOWNLOAD:
+                    builder.setTitle(R.string.dialog_title_queued_body);
+                    builder.setMessage(R.string.dialog_queued_body);
+                    builder.setPositiveButton(R.string.keep_queued_download, null);
 
-            builder.setNegativeButton(
-                    R.string.remove_download, new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            dm.remove(id);
-                        }
-                    });
+                    builder.setNegativeButton(
+                        R.string.remove_download, new DialogInterface.OnClickListener() {
+                           @Override
+                           public void onClick(DialogInterface dialog, int which) {
+                               dm.remove(id);
+                           }
+                        });
+                    break;
+                case PAUSE_DOWNLOAD:
+                    builder.setTitle(R.string.dialog_title);
+                    builder.setMessage(R.string.paused_dialog_msg);
+                    builder.setNegativeButton(android.R.string.no, null);
+
+                    builder.setPositiveButton(
+                        android.R.string.yes, new DialogInterface.OnClickListener() {
+                           @Override
+                           public void onClick(DialogInterface dialog, int which) {
+                               dm.pauseDownload(id);
+                           }
+                        });
+                    break;
+                case RESUME_DOWNLOAD:
+                    builder.setTitle(R.string.dialog_title);
+                    builder.setMessage(R.string.resume_dialog_msg);
+                    builder.setNegativeButton(android.R.string.no, null);
+
+                    builder.setPositiveButton(
+                        android.R.string.yes, new DialogInterface.OnClickListener() {
+                           @Override
+                           public void onClick(DialogInterface dialog, int which) {
+                               dm.resumeDownload(id);
+                               Intent intent = new Intent(Constants.ACTION_RESUME);
+                               intent.setClassName(Constants.PROVIDER_PACKAGE_NAME,
+                                    "com.android.providers.downloads.DownloadReceiver");
+                               getActivity().sendBroadcast(intent);
+                           }
+                        });
+                    break;
+            }
 
             return builder.create();
         }
@@ -179,15 +196,11 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
         @Override
         public void onDismiss(DialogInterface dialog) {
             super.onDismiss(dialog);
-            if (mListener != null) {
-                mListener.onDialogDismiss();
-            }
+            getActivity().finish();
         }
     }
 
     public static class FailedDialogFragment extends DialogFragment {
-        private DialogDismissListener mListener;
-
         public static void show(FragmentManager fm, long id, int reason) {
             final FailedDialogFragment dialog = new FailedDialogFragment();
             final Bundle args = new Bundle();
@@ -198,15 +211,8 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
         }
 
         @Override
-        public void onDetach() {
-            super.onDetach();
-            mListener = null;
-        }
-
-        @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             final Context context = getActivity();
-            mListener = (DialogDismissListener) getActivity();
 
             final DownloadManager dm = (DownloadManager) context.getSystemService(
                     Context.DOWNLOAD_SERVICE);
@@ -219,7 +225,6 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
                     context, AlertDialog.THEME_HOLO_LIGHT);
             builder.setTitle(R.string.dialog_title_not_available);
 
-            final String message;
             switch (reason) {
                 case DownloadManager.ERROR_FILE_ALREADY_EXISTS:
                     builder.setMessage(R.string.dialog_file_already_exists);
@@ -259,9 +264,7 @@ public class TrampolineActivity extends Activity implements DialogDismissListene
         @Override
         public void onDismiss(DialogInterface dialog) {
             super.onDismiss(dialog);
-            if (mListener != null) {
-                mListener.onDialogDismiss();
-            }
+            getActivity().finish();
         }
     }
 }
