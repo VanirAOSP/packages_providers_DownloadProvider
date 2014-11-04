@@ -381,6 +381,7 @@ public class DownloadService extends Service {
 
                     deleteFileIfExists(info.mFileName);
                     resolver.delete(info.getAllDownloadsUri(), null, null);
+                    staleIds.add(info.mId);
 
                 } else {
                     // Kick off download task if ready
@@ -424,6 +425,10 @@ public class DownloadService extends Service {
             intent.setClass(this, DownloadReceiver.class);
             mAlarmManager.set(AlarmManager.RTC_WAKEUP, now + nextActionMillis,
                     PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_ONE_SHOT));
+        }
+
+        if (!isActive) {
+            LiveFolderReceiver.updateFolders(this, 0);
         }
 
         return isActive;
@@ -470,6 +475,7 @@ public class DownloadService extends Service {
             deleteFileIfExists(info.mFileName);
         }
         mDownloads.remove(info.mId);
+        LiveFolderReceiver.updateFolders(this, 0);
     }
 
     private void deleteFileIfExists(String path) {

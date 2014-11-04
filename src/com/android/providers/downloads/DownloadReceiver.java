@@ -76,18 +76,8 @@ public class DownloadReceiver extends BroadcastReceiver {
             if (info != null && info.isConnected()) {
                 startService(context);
             }
-
-        } else if (Intent.ACTION_UID_REMOVED.equals(action)) {
-            final PendingResult result = goAsync();
-            sAsyncHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    handleUidRemoved(context, intent);
-                    result.finish();
-                }
-            });
-
-        } else if (Constants.ACTION_RETRY.equals(action)) {
+        } else if (action.equals(Constants.ACTION_RETRY) ||
+                       action.equals(Constants.ACTION_RESUME)) {
             startService(context);
 
         } else if (Constants.ACTION_OPEN.equals(action)

@@ -29,6 +29,7 @@ import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -134,9 +135,21 @@ public class Helpers {
 
             // Claim this filename inside lock to prevent other threads from
             // clobbering us. We're not paranoid enough to use O_EXCL.
-            final File file = new File(parent, name);
-            file.createNewFile();
-            return file.getAbsolutePath();
+            try {
+                File file = new File(path);
+                File parent = file.getParentFile();
+
+                // Make sure the parent directories exists before generates new file
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+
+                file.createNewFile();
+            } catch (IOException e) {
+                throw new StopRequestException(Downloads.Impl.STATUS_FILE_ERROR,
+                        "Failed to create target file " + path, e);
+            }
+            return path;
         }
     }
 
@@ -338,8 +351,9 @@ public class Helpers {
      * Checks whether the filename looks legitimate for security purposes. This
      * prevents us from opening files that aren't actually downloads.
      */
-    static boolean isFilenameValid(Context context, File file) {
-        final File[] whitelist;
+    static boolean isFilenameValid(Context context, String filename, File downloadsDataDir) {
+        final String[] whitelist;
+        final List<String> secondaryStoragePaths = StorageManager.getSecondaryStoragePaths(context);
         try {
             file = file.getCanonicalFile();
             whitelist = new File[] {
@@ -355,6 +369,12 @@ public class Helpers {
 
         for (File testDir : whitelist) {
             if (FileUtils.contains(testDir, file)) {
+                return true;
+            }
+        }
+
+        for (String test : secondaryStoragePaths) {
+            if (filename.startsWith(test)) {
                 return true;
             }
         }

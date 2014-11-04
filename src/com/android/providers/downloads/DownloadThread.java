@@ -102,7 +102,21 @@ public class DownloadThread implements Runnable {
     private final SystemFacade mSystemFacade;
     private final DownloadNotifier mNotifier;
 
-    private final long mId;
+    private volatile boolean mPolicyDirty;
+
+    // Add for carrier feature - download breakpoint continuing.
+    // Support continuing download after the download is broken
+    // although HTTP Server doesn't contain etag in its response.
+    private final static String QRD_ETAG = "qrd_magic_etag";
+
+    public DownloadThread(Context context, SystemFacade systemFacade, DownloadInfo info,
+            StorageManager storageManager, DownloadNotifier notifier) {
+        mContext = context;
+        mSystemFacade = systemFacade;
+        mInfo = info;
+        mStorageManager = storageManager;
+        mNotifier = notifier;
+    }
 
     /**
      * Info object that should be treated as read-only. Any potentially mutated
@@ -655,6 +669,11 @@ public class DownloadThread implements Runnable {
             if (mInfo.mStatus == Downloads.Impl.STATUS_CANCELED || mInfo.mDeleted) {
                 throw new StopRequestException(Downloads.Impl.STATUS_CANCELED, "download canceled");
             }
+
+            if (mInfo.mStatus == Downloads.Impl.STATUS_PAUSED_BY_MANUAL) {
+                // user pauses the download by manual, here send exception and stop data transfer.
+                throw new StopRequestException(Downloads.Impl.STATUS_PAUSED_BY_MANUAL, "download paused by manual");
+            }
         }
 
         // if policy has been changed, trigger connectivity check
@@ -727,6 +746,12 @@ public class DownloadThread implements Runnable {
             mInfoDelta.mMimeType = Intent.normalizeMimeType(conn.getContentType());
         }
 
+        state.mHeaderETag = conn.getHeaderField("ETag");
+
+        if (state.mHeaderETag == null) {
+            state.mHeaderETag = QRD_ETAG;
+        }
+
         final String transferEncoding = conn.getHeaderField("Transfer-Encoding");
         if (transferEncoding == null) {
             mInfoDelta.mTotalBytes = getHeaderFieldLong(conn, "Content-Length", -1);
@@ -755,7 +780,71 @@ public class DownloadThread implements Runnable {
             retryAfter += Helpers.sRandom.nextInt(Constants.MIN_RETRY_AFTER + 1);
         }
 
-        mInfoDelta.mRetryAfter = (int) (retryAfter * SECOND_IN_MILLIS);
+    /**
+     * Prepare the destination file to receive data.  If the file already exists, we'll set up
+     * appropriately for resumption.
+     */
+    private void setupDestinationFile(State state) throws StopRequestException {
+        if (!TextUtils.isEmpty(state.mFilename)) { // only true if we've already run a thread for this download
+            if (Constants.LOGV) {
+                Log.i(Constants.TAG, "have run thread before for id: " + mInfo.mId +
+                        ", and state.mFilename: " + state.mFilename);
+            }
+            if (!Helpers.isFilenameValid(mContext, state.mFilename,
+                    mStorageManager.getDownloadDataDirectory())) {
+                // this should never happen
+                throw new StopRequestException(Downloads.Impl.STATUS_FILE_ERROR,
+                        "found invalid internal destination filename");
+            }
+            // We're resuming a download that got interrupted
+            File f = new File(state.mFilename);
+            if (f.exists()) {
+                if (Constants.LOGV) {
+                    Log.i(Constants.TAG, "resuming download for id: " + mInfo.mId +
+                            ", and state.mFilename: " + state.mFilename);
+                }
+                long fileLength = f.length();
+                if (fileLength == 0) {
+                    // The download hadn't actually started, we can restart from scratch
+                    if (Constants.LOGVV) {
+                        Log.d(TAG, "setupDestinationFile() found fileLength=0, deleting "
+                                + state.mFilename);
+                    }
+                    f.delete();
+                    state.mFilename = null;
+                    if (Constants.LOGV) {
+                        Log.i(Constants.TAG, "resuming download for id: " + mInfo.mId +
+                                ", BUT starting from scratch again: ");
+                    }
+                } else if (mInfo.mETag == null && !mInfo.mNoIntegrity) {
+                    // This should've been caught upon failure
+                    if (Constants.LOGVV) {
+                        Log.d(TAG, "setupDestinationFile() unable to resume download, deleting "
+                                + state.mFilename);
+                    }
+                    f.delete();
+                    throw new StopRequestException(Downloads.Impl.STATUS_CANNOT_RESUME,
+                            "Trying to resume a download that can't be resumed");
+                } else {
+                    // All right, we'll be able to resume this download
+                    if (Constants.LOGV) {
+                        Log.i(Constants.TAG, "resuming download for id: " + mInfo.mId +
+                                ", and starting with file of length: " + fileLength);
+                    }
+                    state.mCurrentBytes = (int) fileLength;
+                    if (mInfo.mTotalBytes != -1) {
+                        state.mContentLength = mInfo.mTotalBytes;
+                    }
+                    state.mHeaderETag = mInfo.mETag;
+                    state.mContinuingDownload = true;
+                    if (Constants.LOGV) {
+                        Log.i(Constants.TAG, "resuming download for id: " + mInfo.mId +
+                                ", state.mCurrentBytes: " + state.mCurrentBytes +
+                                ", and setting mContinuingDownload to true: ");
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -775,9 +864,11 @@ public class DownloadThread implements Runnable {
         // easily resume partial downloads.
         conn.setRequestProperty("Accept-Encoding", "identity");
 
-        if (resuming) {
-            if (mInfoDelta.mETag != null) {
-                conn.addRequestProperty("If-Match", mInfoDelta.mETag);
+        if (state.mContinuingDownload) {
+            if (state.mHeaderETag != null) {
+                if (!state.mHeaderETag.equals(QRD_ETAG)) {
+                    conn.addRequestProperty("If-Match", state.mHeaderETag);
+                }
             }
             conn.addRequestProperty("Range", "bytes=" + mInfoDelta.mCurrentBytes + "-");
         }
